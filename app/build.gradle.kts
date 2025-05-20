@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.b4g.smsgateway_app"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.b4g.smsgateway_app"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
@@ -34,9 +34,10 @@ android {
         jvmTarget = "11"
     }
 
-    // Add this to handle resource parsing issues
+    // Resource handling options
     androidResources {
         noCompress += listOf("")
+        additionalParameters += listOf("--warn-manifest-validation")
     }
 }
 
@@ -46,16 +47,15 @@ dependencies {
     implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
-    // Add OkHttp for API calls
-    implementation("com.squareup.okhttp3:okhttp:4.11.0") {
+    // Add OkHttp for API calls with strict version
+    implementation("com.squareup.okhttp3:okhttp:4.10.0") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
     }
 
     // Explicitly declare Kotlin dependencies
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.8.10")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.10")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.10")
 
     // Testing dependencies
     testImplementation("junit:junit:4.13.2")
