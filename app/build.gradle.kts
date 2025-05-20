@@ -34,7 +34,7 @@ android {
         jvmTarget = "11"
     }
 
-    // Resource handling options
+    // Resource handling options by morning
     androidResources {
         noCompress += listOf("")
         additionalParameters += listOf("--warn-manifest-validation")
