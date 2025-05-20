@@ -1,42 +1,48 @@
 package com.b4g.smsgateway_app;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.telephony.SmsManager;
-import android.util.Log;
+import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import org.json.JSONException;
-import org.json.JSONObject;
-import java.io.IOException;
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final String TAG = "SMSGatewayApp";
-    private static final String API_URL = "https://byte4ge.com/admin/API/mobileSMSgateway/v1/get_sms.php";
 
-    private OkHttpClient client = new OkHttpClient();
+    private TextView statusText;
+    private TextView logText;
+    private Button startStopButton;
+    private boolean isServiceRunning = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        Log.d(TAG, "Application started");
+        // Initialize UI components
+        statusText = findViewById(R.id.statusText);
+        logText = findViewById(R.id.logText);
+        startStopButton = findViewById(R.id.fetchButton);
+        startStopButton.setText("Start Service");
 
-        // Check and request permissions
+        // Set up button click listener
+        startStopButton.setOnClickListener(v -> {
+            if (hasRequiredPermissions()) {
+                toggleService();
+            } else {
+                requestSmsPermissions();
+            }
+        });
+
+        // Check permissions on startup
         if (!hasRequiredPermissions()) {
             requestSmsPermissions();
-        } else {
-            fetchAndProcessSMS();
         }
     }
 
@@ -62,99 +68,56 @@ public class MainActivity extends AppCompatActivity {
 
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                fetchAndProcessSMS();
+                updateStatus("Permissions granted. Ready to start service.");
             } else {
-                showToast("SMS permissions are required for this app to function");
-                Log.e(TAG, "Required permissions were denied");
+                updateStatus("SMS permissions are required for this app to function");
             }
         }
     }
 
-    private void fetchAndProcessSMS() {
-        Log.d(TAG, "Fetching SMS data from API");
-        showToast("Fetching pending SMS...");
-
-        Request request = new Request.Builder()
-                .url(API_URL)
-                .build();
-
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                Log.e(TAG, "API request failed: " + e.getMessage());
-                runOnUiThread(() -> showToast("Failed to connect to SMS gateway"));
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                if (!response.isSuccessful()) {
-                    Log.e(TAG, "API responded with error: " + response.code());
-                    runOnUiThread(() -> showToast("Server responded with error"));
-                    return;
-                }
-
-                try {
-                    String responseBody = response.body().string();
-                    Log.d(TAG, "API Response: " + responseBody);
-
-                    JSONObject smsData = new JSONObject(responseBody);
-                    processSMSMessage(smsData);
-
-                } catch (JSONException e) {
-                    Log.e(TAG, "JSON parsing error: " + e.getMessage());
-                    runOnUiThread(() -> showToast("Error parsing SMS data"));
-                }
-            }
-        });
-    }
-
-    private void processSMSMessage(JSONObject smsData) throws JSONException {
-        String id = smsData.getString("id");
-        String phoneNumber = smsData.getString("phone_number");
-        String message = smsData.getString("message");
-        String status = smsData.getString("status");
-
-        Log.d(TAG, "Processing SMS ID: " + id + " | Status: " + status);
-
-        if ("pending".equalsIgnoreCase(status)) {
-            Log.d(TAG, "Sending SMS to: " + phoneNumber);
-            sendSMS(phoneNumber, message, id);
+    private void toggleService() {
+        if (!isServiceRunning) {
+            startService();
         } else {
-            Log.d(TAG, "SMS already processed, status: " + status);
-            runOnUiThread(() -> showToast("No pending SMS to send"));
+            stopService();
         }
     }
 
-    private void sendSMS(String phoneNumber, String message, String smsId) {
-        try {
-            SmsManager smsManager = SmsManager.getDefault();
-            smsManager.sendTextMessage(phoneNumber, null, message, null, null);
+    private void startService() {
+        Intent serviceIntent = new Intent(this, SMSGatewayService.class);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
+        }
+        isServiceRunning = true;
+        startStopButton.setText("Stop Service");
+        updateStatus("Service started. Running in background.");
+    }
 
-            Log.d(TAG, "SMS successfully sent to " + phoneNumber);
-            runOnUiThread(() -> {
-                showToast("SMS sent to " + phoneNumber);
-                // Here you would typically call your API to update status to "sent"
-                // updateSmsStatus(smsId, "sent");
-            });
+    private void stopService() {
+        Intent serviceIntent = new Intent(this, SMSGatewayService.class);
+        stopService(serviceIntent);
+        isServiceRunning = false;
+        startStopButton.setText("Start Service");
+        updateStatus("Service stopped.");
+    }
 
-        } catch (Exception e) {
-            Log.e(TAG, "SMS sending failed: " + e.getMessage());
-            runOnUiThread(() -> {
-                showToast("Failed to send SMS");
-                // Here you would typically call your API to update status to "failed"
-                // updateSmsStatus(smsId, "failed");
-            });
+    private void updateStatus(String message) {
+        statusText.setText(message);
+        appendLog(message);
+    }
+
+    private void appendLog(String message) {
+        String timestamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(new java.util.Date());
+        String logMessage = timestamp + " - " + message + "\n";
+        logText.append(logMessage);
+        
+        // Scroll to bottom
+        int scrollAmount = logText.getLayout().getLineTop(logText.getLineCount()) - logText.getHeight();
+        if (scrollAmount > 0) {
+            logText.scrollTo(0, scrollAmount);
         }
     }
-
-    private void showToast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-    }
-
-    // Uncomment and implement when you have the update status API endpoint
-    /*
-    private void updateSmsStatus(String smsId, String status) {
-        // Implement API call to update SMS status
-    }
-    */
 }
