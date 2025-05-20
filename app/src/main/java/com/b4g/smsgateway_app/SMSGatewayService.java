@@ -432,7 +432,7 @@ public class SMSGatewayService extends Service {
                         deliveryIntents, 
                         0, 
                         true, // hideFromDefaultSmsApp
-                        SmsManager.SKIP_STORAGE_FLAG
+                        0x10 // Use the integer value for SKIP_STORAGE_FLAG (16 in decimal)
                     );
                 } else {
                     // For older Android versions
@@ -456,7 +456,7 @@ public class SMSGatewayService extends Service {
                         deliveryIntent, 
                         0, 
                         true, // hideFromDefaultSmsApp
-                        SmsManager.SKIP_STORAGE_FLAG
+                        0x10 // Use the integer value for SKIP_STORAGE_FLAG (16 in decimal)
                     );
                 } else {
                     // Use the standard method for older Android versions
