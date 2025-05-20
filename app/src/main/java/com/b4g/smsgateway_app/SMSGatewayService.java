@@ -18,6 +18,7 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -295,8 +296,31 @@ public class SMSGatewayService extends Service {
                     }
 
                     try {
-                        JSONObject smsData = new JSONObject(responseBody);
-                        processSMSMessage(smsData);
+                        // First check if it's a JSON array
+                        if (responseBody.trim().startsWith("[")) {
+                            // Handle array of messages
+                            JSONArray messagesArray = new JSONArray(responseBody);
+                            Log.d(TAG, "Processing " + messagesArray.length() + " SMS messages");
+                            updateNotification("Processing " + messagesArray.length() + " SMS messages");
+                            
+                            int processedCount = 0;
+                            for (int i = 0; i < messagesArray.length(); i++) {
+                                JSONObject smsData = messagesArray.getJSONObject(i);
+                                if (processSMSMessage(smsData)) {
+                                    processedCount++;
+                                }
+                            }
+                            
+                            if (processedCount > 0) {
+                                updateNotification("Processed " + processedCount + " of " + messagesArray.length() + " messages");
+                            } else {
+                                updateNotification("No pending SMS to send");
+                            }
+                        } else {
+                            // Handle single message
+                            JSONObject smsData = new JSONObject(responseBody);
+                            processSMSMessage(smsData);
+                        }
                     } catch (JSONException e) {
                         Log.e(TAG, "JSON parsing error: " + e.getMessage(), e);
                         updateNotification("Error parsing response: " + e.getMessage());
@@ -310,14 +334,14 @@ public class SMSGatewayService extends Service {
         });
     }
 
-    private void processSMSMessage(JSONObject smsData) {
+    private boolean processSMSMessage(JSONObject smsData) {
         try {
             // Check if object contains required fields
             if (!smsData.has("id") || !smsData.has("phone_number") || 
                 !smsData.has("message") || !smsData.has("status")) {
                 Log.e(TAG, "Missing required fields in response: " + smsData.toString());
                 updateNotification("Error: Invalid response format");
-                return;
+                return false;
             }
             
             String id = smsData.getString("id");
@@ -330,16 +354,20 @@ public class SMSGatewayService extends Service {
             if ("pending".equalsIgnoreCase(status)) {
                 Log.d(TAG, "Found pending SMS to: " + phoneNumber);
                 sendSMS(phoneNumber, message, id);
+                return true;
             } else {
                 Log.d(TAG, "SMS already processed, status: " + status);
                 updateNotification("No pending SMS to send");
+                return false;
             }
         } catch (JSONException e) {
             Log.e(TAG, "Error processing SMS data: " + e.getMessage(), e);
             updateNotification("Error processing SMS data");
+            return false;
         } catch (Exception e) {
             Log.e(TAG, "Unknown error processing SMS: " + e.getMessage(), e);
             updateNotification("Unknown error processing SMS");
+            return false;
         }
     }
 
