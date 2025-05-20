@@ -27,8 +27,10 @@ import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
 import okhttp3.Callback;
+import okhttp3.FormBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public class SMSGatewayService extends Service {
@@ -36,6 +38,7 @@ public class SMSGatewayService extends Service {
     private static final String CHANNEL_ID = "SMSGatewayChannel";
     private static final int NOTIFICATION_ID = 1;
     private static final String API_URL = "https://byte4ge.com/admin/API/mobileSMSgateway/v1/get_sms.php";
+    private static final String UPDATE_API_URL = "https://byte4ge.com/admin/API/mobileSMSgateway/v1/update_sms_status.php";
     private static final long FETCH_INTERVAL = 5000; // 5 seconds
 
     private OkHttpClient client;
@@ -389,6 +392,8 @@ public class SMSGatewayService extends Service {
                 // Simulate sending SMS in emulator
                 Log.d(TAG, "EMULATOR MODE: Simulated SMS to " + phoneNumber + ": " + message);
                 updateNotification("SIMULATED: SMS sent to " + phoneNumber);
+                // Update status on server
+                updateSmsStatus(smsId, "success");
                 return;
             }
             
@@ -397,6 +402,7 @@ public class SMSGatewayService extends Service {
             if (smsManager == null) {
                 Log.e(TAG, "SmsManager is null");
                 updateNotification("Error: SMS service not available");
+                updateSmsStatus(smsId, "pending");
                 return;
             }
             
@@ -405,17 +411,77 @@ public class SMSGatewayService extends Service {
             Log.d(TAG, "SMS successfully sent to " + phoneNumber);
             updateNotification("SMS sent to " + phoneNumber);
             
-            // Here you would typically call your API to update status to "sent"
-            // updateSmsStatus(smsId, "sent");
+            // Update status on server
+            updateSmsStatus(smsId, "success");
 
         } catch (SecurityException se) {
             Log.e(TAG, "SMS permission denied: " + se.getMessage(), se);
             updateNotification("Error: SMS permission denied");
+            updateSmsStatus(smsId, "pending");
         } catch (Exception e) {
             Log.e(TAG, "SMS sending failed: " + e.getMessage(), e);
             updateNotification("Failed to send SMS: " + e.getMessage());
-            // Here you would typically call your API to update status to "failed"
-            // updateSmsStatus(smsId, "failed");
+            updateSmsStatus(smsId, "pending");
+        }
+    }
+    
+    private void updateSmsStatus(final String smsId, final String status) {
+        if (smsId == null || smsId.isEmpty()) {
+            Log.e(TAG, "Invalid SMS ID for status update");
+            return;
+        }
+        
+        if (client == null) {
+            Log.e(TAG, "OkHttpClient is null for status update");
+            return;
+        }
+        
+        try {
+            Log.d(TAG, "Updating SMS ID: " + smsId + " with status: " + status);
+            
+            // Create request body with form data
+            RequestBody formBody = new FormBody.Builder()
+                    .add("id", smsId)
+                    .add("status", status)
+                    .build();
+            
+            // Build the request
+            Request request = new Request.Builder()
+                    .url(UPDATE_API_URL)
+                    .post(formBody)
+                    .build();
+            
+            // Execute the request asynchronously
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.e(TAG, "Failed to update SMS status: " + e.getMessage(), e);
+                }
+                
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    try {
+                        if (!response.isSuccessful()) {
+                            Log.e(TAG, "Server error when updating SMS status: " + response.code());
+                            return;
+                        }
+                        
+                        String responseBody = "";
+                        if (response.body() != null) {
+                            responseBody = response.body().string();
+                            Log.d(TAG, "Status update response: " + responseBody);
+                        }
+                        
+                        Log.d(TAG, "Successfully updated SMS ID: " + smsId + " to status: " + status);
+                        
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error processing status update response: " + e.getMessage(), e);
+                    }
+                }
+            });
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating SMS status: " + e.getMessage(), e);
         }
     }
     
