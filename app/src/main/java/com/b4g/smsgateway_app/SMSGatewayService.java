@@ -50,6 +50,8 @@ public class SMSGatewayService extends Service {
     private PendingIntent pendingIntent;
     // Map to track SMS broadcasts by ID
     private java.util.Map<String, android.content.BroadcastReceiver> sentReceivers = new java.util.HashMap<>();
+    // Add a map to track delivery receivers
+    private java.util.Map<String, android.content.BroadcastReceiver> deliveryReceivers = new java.util.HashMap<>();
 
     @Override
     public void onCreate() {
@@ -407,19 +409,24 @@ public class SMSGatewayService extends Service {
             if (smsManager == null) {
                 Log.e(TAG, "SmsManager is null");
                 updateNotification("Error: SMS service not available");
-                updateSmsStatus(smsId, "pending");
+                updateSmsStatus(smsId, "failed");
                 return;
             }
             
             // Update status to sending immediately
             updateSmsStatus(smsId, "sending");
             
-            // Create unique action for this SMS - use a static action for better broadcast delivery
-            final String SENT_ACTION = "android.provider.Telephony.SMS_SENT";
+            // Create unique actions for this SMS
+            final String SENT_ACTION = "SMS_SENT_" + smsId;
+            final String DELIVERED_ACTION = "SMS_DELIVERED_" + smsId;
+            
             Intent sentIntent = new Intent(SENT_ACTION);
             sentIntent.putExtra("sms_id", smsId);
             
-            // Create the pending intent with proper flags
+            Intent deliveredIntent = new Intent(DELIVERED_ACTION);
+            deliveredIntent.putExtra("sms_id", smsId);
+            
+            // Create the pending intents with proper flags
             int flags = 0;
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 flags |= PendingIntent.FLAG_IMMUTABLE;
@@ -432,8 +439,16 @@ public class SMSGatewayService extends Service {
                 flags
             );
             
-            // Register BroadcastReceiver before sending SMS
+            PendingIntent deliveredPI = PendingIntent.getBroadcast(
+                getApplicationContext(),
+                (int)((System.currentTimeMillis() + 1) % Integer.MAX_VALUE), // Different unique request code
+                deliveredIntent,
+                flags
+            );
+            
+            // Register BroadcastReceivers before sending SMS
             registerSentStatusReceiver(SENT_ACTION, smsId);
+            registerDeliveryStatusReceiver(DELIVERED_ACTION, smsId);
             
             try {
                 // Log all parameters before sending SMS
@@ -441,38 +456,23 @@ public class SMSGatewayService extends Service {
                 
                 // For short messages, use the standard method
                 if (message.length() <= 160) {
-                    smsManager.sendTextMessage(phoneNumber, null, message, sentPI, null);
+                    smsManager.sendTextMessage(phoneNumber, null, message, sentPI, deliveredPI);
                 } else {
                     // For longer messages, divide into parts
                     ArrayList<String> parts = smsManager.divideMessage(message);
                     ArrayList<PendingIntent> sentIntents = new ArrayList<>();
+                    ArrayList<PendingIntent> deliveredIntents = new ArrayList<>();
+                    
                     for (int i = 0; i < parts.size(); i++) {
                         sentIntents.add(sentPI);
+                        deliveredIntents.add(deliveredPI);
                     }
-                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, sentIntents, null);
+                    
+                    smsManager.sendMultipartTextMessage(phoneNumber, null, parts, sentIntents, deliveredIntents);
                 }
                 
                 Log.d(TAG, "SMS sending initiated to " + phoneNumber + " with ID: " + smsId);
                 updateNotification("Sending SMS to " + phoneNumber);
-                
-                // Consider SMS sending as successful if no exception is thrown
-                // This is a fallback in case broadcast is never received
-                handler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        // Check if SMS is still in "sending" state after a short delay
-                        android.content.BroadcastReceiver receiver = sentReceivers.get(smsId);
-                        if (receiver != null) {
-                            try {
-                                Log.d(TAG, "Assuming SMS " + smsId + " was sent successfully (no exceptions)");
-                                // Only update if still in "sending" state to avoid overriding broadcast results
-                                updateSmsStatus(smsId, "success");
-                            } catch (Exception e) {
-                                Log.e(TAG, "Error handling SMS assumed success: " + e.getMessage(), e);
-                            }
-                        }
-                    }
-                }, 5000); // 5 seconds timeout for assumed success
                 
             } catch (Exception e) {
                 Log.e(TAG, "Error sending SMS: " + e.getMessage(), e);
@@ -480,15 +480,7 @@ public class SMSGatewayService extends Service {
                 updateSmsStatus(smsId, "failed");
                 
                 // Cleanup in case of exception
-                android.content.BroadcastReceiver receiver = sentReceivers.get(smsId);
-                if (receiver != null) {
-                    try {
-                        getApplicationContext().unregisterReceiver(receiver);
-                        sentReceivers.remove(smsId);
-                    } catch (Exception ex) {
-                        Log.e(TAG, "Error cleaning up receiver: " + ex.getMessage(), ex);
-                    }
-                }
+                cleanup(smsId);
             }
 
         } catch (SecurityException se) {
@@ -502,9 +494,90 @@ public class SMSGatewayService extends Service {
         }
     }
     
+    private void cleanup(String smsId) {
+        try {
+            android.content.BroadcastReceiver sentReceiver = sentReceivers.get(smsId);
+            if (sentReceiver != null) {
+                try {
+                    getApplicationContext().unregisterReceiver(sentReceiver);
+                    sentReceivers.remove(smsId);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error unregistering sent receiver: " + e.getMessage(), e);
+                }
+            }
+            
+            android.content.BroadcastReceiver deliveryReceiver = deliveryReceivers.get(smsId);
+            if (deliveryReceiver != null) {
+                try {
+                    getApplicationContext().unregisterReceiver(deliveryReceiver);
+                    deliveryReceivers.remove(smsId);
+                } catch (Exception e) {
+                    Log.e(TAG, "Error unregistering delivery receiver: " + e.getMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error during cleanup: " + e.getMessage(), e);
+        }
+    }
+    
+    private void registerDeliveryStatusReceiver(String action, final String smsId) {
+        try {
+            Log.d(TAG, "Registering delivery receiver for SMS " + smsId + " with action: " + action);
+            
+            // Create the receiver
+            android.content.BroadcastReceiver deliveryReceiver = new android.content.BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    try {
+                        // Log receipt of broadcast
+                        Log.d(TAG, "Received SMS delivery status for ID: " + smsId + ", result code: " + getResultCode());
+                        
+                        // Unregister the receiver
+                        try {
+                            context.unregisterReceiver(this);
+                            deliveryReceivers.remove(smsId);
+                            Log.d(TAG, "Unregistered delivery receiver for SMS " + smsId);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error unregistering delivery receiver: " + e.getMessage(), e);
+                        }
+                        
+                        // Process the result
+                        switch (getResultCode()) {
+                            case android.app.Activity.RESULT_OK:
+                                Log.d(TAG, "SMS successfully delivered to recipient, ID: " + smsId);
+                                updateNotification("SMS delivered successfully");
+                                updateSmsStatus(smsId, "delivered");
+                                break;
+                                
+                            default:
+                                Log.e(TAG, "SMS delivery failed for ID: " + smsId + ", Code: " + getResultCode());
+                                updateNotification("SMS failed to deliver to recipient");
+                                updateSmsStatus(smsId, "delivery_failed");
+                                break;
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in SMS delivery receiver: " + e.getMessage(), e);
+                    }
+                }
+            };
+            
+            // Store the receiver
+            deliveryReceivers.put(smsId, deliveryReceiver);
+            
+            // Register the receiver
+            getApplicationContext().registerReceiver(
+                deliveryReceiver,
+                new android.content.IntentFilter(action)
+            );
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error registering SMS delivery receiver: " + e.getMessage(), e);
+        }
+    }
+    
     private void registerSentStatusReceiver(String action, final String smsId) {
         try {
-            Log.d(TAG, "Registering receiver for SMS " + smsId + " with action: " + action);
+            Log.d(TAG, "Registering sent receiver for SMS " + smsId + " with action: " + action);
             
             // Create the receiver
             android.content.BroadcastReceiver sentReceiver = new android.content.BroadcastReceiver() {
@@ -518,82 +591,92 @@ public class SMSGatewayService extends Service {
                         try {
                             context.unregisterReceiver(this);
                             sentReceivers.remove(smsId);
-                            Log.d(TAG, "Unregistered receiver for SMS " + smsId);
+                            Log.d(TAG, "Unregistered sent receiver for SMS " + smsId);
                         } catch (Exception e) {
-                            Log.e(TAG, "Error unregistering receiver: " + e.getMessage(), e);
+                            Log.e(TAG, "Error unregistering sent receiver: " + e.getMessage(), e);
                         }
                         
                         // Process the result
-                        String statusToUpdate = "failed";
                         switch (getResultCode()) {
                             case android.app.Activity.RESULT_OK:
-                                Log.d(TAG, "SMS successfully sent, ID: " + smsId);
-                                updateNotification("SMS sent successfully");
-                                statusToUpdate = "success";
+                                Log.d(TAG, "SMS successfully sent to carrier, ID: " + smsId);
+                                updateNotification("SMS sent to carrier");
+                                updateSmsStatus(smsId, "sent_to_carrier");
                                 break;
                                 
                             case SmsManager.RESULT_ERROR_GENERIC_FAILURE:
                                 Log.e(TAG, "Generic failure in sending SMS, ID: " + smsId);
                                 updateNotification("Failed to send SMS: Generic failure");
+                                updateSmsStatus(smsId, "failed");
+                                
+                                // Also clean up delivery receiver since SMS won't be delivered
+                                android.content.BroadcastReceiver deliveryReceiver = deliveryReceivers.get(smsId);
+                                if (deliveryReceiver != null) {
+                                    try {
+                                        context.unregisterReceiver(deliveryReceiver);
+                                        deliveryReceivers.remove(smsId);
+                                    } catch (Exception e) {
+                                        Log.e(TAG, "Error unregistering delivery receiver: " + e.getMessage(), e);
+                                    }
+                                }
                                 break;
                                 
                             case SmsManager.RESULT_ERROR_NO_SERVICE:
                                 Log.e(TAG, "No service for sending SMS, ID: " + smsId);
                                 updateNotification("Failed to send SMS: No service");
+                                updateSmsStatus(smsId, "failed");
+                                cleanup(smsId);
                                 break;
                                 
                             case SmsManager.RESULT_ERROR_NULL_PDU:
                                 Log.e(TAG, "Null PDU in sending SMS, ID: " + smsId);
                                 updateNotification("Failed to send SMS: Null PDU");
+                                updateSmsStatus(smsId, "failed");
+                                cleanup(smsId);
                                 break;
                                 
                             case SmsManager.RESULT_ERROR_RADIO_OFF:
                                 Log.e(TAG, "Radio off error in sending SMS, ID: " + smsId);
                                 updateNotification("Failed to send SMS: Radio off");
+                                updateSmsStatus(smsId, "failed");
+                                cleanup(smsId);
                                 break;
                                 
                             default:
-                                // On some devices, a different success code might be returned
-                                // Consider it a success if it's not a known error code
-                                Log.d(TAG, "Unknown result code in sending SMS: " + getResultCode() + " - treating as success");
-                                updateNotification("SMS likely sent successfully");
-                                statusToUpdate = "success";
+                                Log.e(TAG, "Unknown error in sending SMS, ID: " + smsId + ", Code: " + getResultCode());
+                                updateNotification("Failed to send SMS: Unknown error");
+                                updateSmsStatus(smsId, "failed");
+                                cleanup(smsId);
                                 break;
                         }
-                        updateSmsStatus(smsId, statusToUpdate);
                     } catch (Exception e) {
                         Log.e(TAG, "Error in SMS sent receiver: " + e.getMessage(), e);
                         updateSmsStatus(smsId, "failed");
+                        cleanup(smsId);
                     }
                 }
             };
             
-            // Store the receiver to prevent garbage collection
+            // Store the receiver
             sentReceivers.put(smsId, sentReceiver);
             
-            // Register the receiver with the application context
+            // Register the receiver
             getApplicationContext().registerReceiver(
                 sentReceiver,
                 new android.content.IntentFilter(action)
             );
             
-            // Set a timeout for SMS status (in case broadcast is never received)
+            // Set a timeout for receivers
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    android.content.BroadcastReceiver receiver = sentReceivers.get(smsId);
-                    if (receiver != null) {
-                        try {
-                            Log.d(TAG, "Timeout for SMS " + smsId + ". Removing receiver.");
-                            getApplicationContext().unregisterReceiver(receiver);
-                            sentReceivers.remove(smsId);
-                            // Don't update status here as the fallback handler will have updated it
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error handling SMS timeout: " + e.getMessage(), e);
-                        }
+                    if (sentReceivers.containsKey(smsId) || deliveryReceivers.containsKey(smsId)) {
+                        Log.d(TAG, "Timeout for SMS " + smsId + ". Marking as unknown status.");
+                        updateSmsStatus(smsId, "unknown");
+                        cleanup(smsId);
                     }
                 }
-            }, 60000); // 60 seconds timeout for receiver cleanup
+            }, 60000); // 60 seconds timeout
             
         } catch (Exception e) {
             Log.e(TAG, "Error registering SMS sent receiver: " + e.getMessage(), e);
