@@ -23,7 +23,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -407,71 +406,10 @@ public class SMSGatewayService extends Service {
                 return;
             }
             
-            // Create sent and delivery intents with specific flags to prevent SMS from appearing in the SMS app
-            PendingIntent sentIntent = null;
-            PendingIntent deliveryIntent = null;
-            
-            if (message.length() > 160) {
-                // For long messages, split them into parts
-                ArrayList<String> messageParts = smsManager.divideMessage(message);
-                ArrayList<PendingIntent> sentIntents = new ArrayList<>();
-                ArrayList<PendingIntent> deliveryIntents = new ArrayList<>();
-                
-                for (int i = 0; i < messageParts.size(); i++) {
-                    sentIntents.add(sentIntent);
-                    deliveryIntents.add(deliveryIntent);
-                }
-                
-                // Send as multipart message with SKIP_STORAGE flag
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    smsManager.sendMultipartTextMessage(
-                        phoneNumber, 
-                        null, 
-                        messageParts, 
-                        sentIntents, 
-                        deliveryIntents, 
-                        0, 
-                        true, // hideFromDefaultSmsApp
-                        0x10 // Use the integer value for SKIP_STORAGE_FLAG (16 in decimal)
-                    );
-                } else {
-                    // For older Android versions
-                    smsManager.sendMultipartTextMessage(
-                        phoneNumber, 
-                        null, 
-                        messageParts, 
-                        sentIntents, 
-                        deliveryIntents
-                    );
-                }
-            } else {
-                // For regular length messages
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Use the newer API with SKIP_STORAGE_FLAG on Android R+
-                    smsManager.sendTextMessage(
-                        phoneNumber, 
-                        null, 
-                        message, 
-                        sentIntent, 
-                        deliveryIntent, 
-                        0, 
-                        true, // hideFromDefaultSmsApp
-                        0x10 // Use the integer value for SKIP_STORAGE_FLAG (16 in decimal)
-                    );
-                } else {
-                    // Use the standard method for older Android versions
-                    smsManager.sendTextMessage(
-                        phoneNumber, 
-                        null, 
-                        message, 
-                        sentIntent, 
-                        deliveryIntent
-                    );
-                }
-            }
-            
-            Log.d(TAG, "SMS successfully sent to " + phoneNumber + " (hidden from SMS app)");
-            updateNotification("SMS sent to " + phoneNumber + " (hidden)");
+            // Send the SMS
+            smsManager.sendTextMessage(phoneNumber, null, message, null, null);
+            Log.d(TAG, "SMS successfully sent to " + phoneNumber);
+            updateNotification("SMS sent to " + phoneNumber);
             
             // Update status on server
             updateSmsStatus(smsId, "success");
