@@ -33,6 +33,11 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+
+    // Add this to handle resource parsing issues
+    androidResources {
+        noCompress += listOf("")
+    }
 }
 
 dependencies {

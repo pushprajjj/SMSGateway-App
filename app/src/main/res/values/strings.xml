@@ -1,3 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SMSGateway-App</string>
+    <string name="app_name">SMS Gateway</string>
+    <string name="service_notification_title">SMS Gateway</string>
+    <string name="service_notification_channel_name">SMS Gateway Service</string>
+    <string name="service_notification_channel_description">SMS Gateway Service Channel</string>
 </resources>
