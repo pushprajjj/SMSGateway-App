@@ -28,6 +28,48 @@ The app connects to the following endpoints:
 - `https://byte4ge.com/admin/API/mobileSMSgateway/v1/get_sms.php` - To fetch pending SMS
 - `https://byte4ge.com/admin/API/mobileSMSgateway/v1/update_sms_status.php` - To update SMS status
 
+### API Response and Request Formats
+
+#### Incoming SMS Response Format
+
+The server returns SMS data in one of the following formats:
+
+1. JSON Array (multiple messages):
+```json
+[
+  {
+    "id": "123",
+    "phone_number": "+1234567890",
+    "message": "Hello, this is a test message",
+    "status": "pending"
+  },
+  {
+    "id": "124",
+    "phone_number": "+0987654321",
+    "message": "Another test message",
+    "status": "pending"
+  }
+]
+```
+
+2. JSON Object (single message):
+```json
+{
+  "id": "123",
+  "phone_number": "+1234567890",
+  "message": "Hello, this is a test message",
+  "status": "pending"
+}
+```
+
+#### Status Update Request Format
+
+When updating SMS status, the app sends the following form data:
+```
+id: [SMS ID]
+status: [success/pending]
+```
+
 ## Requirements
 
 - Android device with SMS capabilities
